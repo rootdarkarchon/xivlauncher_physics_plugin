@@ -18,14 +18,16 @@ internal class Physics : IDisposable
     [Signature("48 8B C4 48 89 48 08 55 48 81 EC", DetourName = nameof(PhysicsSkip))]
     private readonly Hook<PhysicsSkipDelegate>? _physicsSkipHook = null!;
 
+    private TimeSlice _currentSlice;
     private bool _executePhysics = false;
     private long _expectedFrameTime;
-    private long _lastExecutedTick = 0;
 
     public Physics(Framework framework)
     {
         SignatureHelper.Initialise(this);
         _framework = framework;
+
+        _currentSlice = new(DateTime.Now.Ticks, _expectedFrameTime);
 
         if (Service.Settings.EnableOnStartup)
         {
@@ -65,18 +67,20 @@ internal class Physics : IDisposable
 
     public void RecalculateExpectedFrametime()
     {
-        var physicsFrameTime = (long)((1 / (FramesPerSecond)) * TimeSpan.TicksPerSecond);
-        _expectedFrameTime = (long)(physicsFrameTime - ((physicsFrameTime / FramesPerSecond) * Service.Settings.PhysicsFrameTolerance));
+        _expectedFrameTime = (long)((1 / (FramesPerSecond)) * TimeSpan.TicksPerSecond);
     }
 
     private void Framework_Update(Framework framework)
     {
         var currentTick = DateTime.Now.Ticks;
-        var frameTickDelta = currentTick - _lastExecutedTick;
-
-        if (frameTickDelta >= _expectedFrameTime)
+        while (currentTick > _currentSlice!.EndTick)
         {
-            _lastExecutedTick = currentTick;
+            _currentSlice.Update(_currentSlice, _expectedFrameTime);
+        }
+
+        if (!_currentSlice.RanPhysics)
+        {
+            _currentSlice.RanPhysics = true;
             _executePhysics = true;
         }
         else
@@ -94,6 +98,27 @@ internal class Physics : IDisposable
         else
         {
             return _frameworkPointer;
+        }
+    }
+
+    private record TimeSlice
+    {
+        public TimeSlice(long startTick, long sliceLength)
+        {
+            StartTick = startTick;
+            _sliceLength = sliceLength;
+        }
+
+        private long _sliceLength;
+        public long StartTick { get; private set; }
+        public long EndTick => StartTick + _sliceLength;
+        public bool RanPhysics { get; set; }
+
+        public void Update(TimeSlice slice, long sliceLength)
+        {
+            RanPhysics = false;
+            StartTick = slice.EndTick;
+            _sliceLength = sliceLength;
         }
     }
 }
